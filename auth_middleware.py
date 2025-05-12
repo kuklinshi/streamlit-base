@@ -10,10 +10,10 @@ class AuthManager:
     Gerenciador de autenticação que utiliza cookies para manter a sessão ativa
     """
     
-    def __init__(self, cookie_name="qd_assistant_auth", expiry_days=7):
+    def __init__(self, cookie_name="generic_chat_auth", expiry_days=7):
         self.cookie_name = cookie_name
         self.expiry_days = expiry_days
-        self.secret_key = "QD_ASSISTANT_SECRET_KEY"
+        self.secret_key = "GENERIC_CHAT_SECRET_KEY"
     
     def _create_signature(self, payload):
         """Cria uma assinatura para o payload usando HMAC"""
@@ -84,7 +84,7 @@ def check_password_with_cookie():
     def password_entered():
         """Verificação da senha digitada"""
         if hmac.compare_digest(st.session_state["username"].strip(), "admin") and \
-           hmac.compare_digest(st.session_state["password"].strip(), "123456"):
+           hmac.compare_digest(st.session_state["password"].strip(), "admin123"):
             
             auth_cookie = auth_manager.create_auth_cookie(st.session_state["username"])
             

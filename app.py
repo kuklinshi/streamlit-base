@@ -8,6 +8,9 @@ import boto3
 from datetime import datetime
 import re
 import base64
+import os
+
+PROFILE_NAME = os.environ.get("AWS_PROFILE", "edn173")
 
 def add_javascript():
     """Adiciona JavaScript para melhorar a interação do usuário com o chat"""
@@ -33,414 +36,107 @@ def add_javascript():
     </script>
     """
     st.components.v1.html(js_code, height=0)
+
 st.set_page_config(
-   page_title="Assistente Virtual",
-   page_icon="logo.png",
+   page_title="Chat Genérico",
+   page_icon="logo.jpeg",
    layout="wide",
    initial_sidebar_state="expanded"
 )
 
-api_url = "https://b3hdb5rxag.execute-api.us-east-2.amazonaws.com/default/inference-prompt"
-
-logo_path = "logo.png"
+logo_path = "logo.jpeg"
 
 def preprocess_user_message(message):
     """
-    Pré-processamento para forçar um estilo conversacional humano em primeira pessoa
+    Função simples de pré-processamento da mensagem do usuário
     """
-    system_prompt = """
-### INSTRUÇÕES PRINCIPAIS (OBEDEÇA ESTRITAMENTE):
+    return message
 
-1. Você é um atendente HUMANO da [EMPRESA] - NUNCA aja como IA ou assistente virtual.
-2. SEMPRE responda em PRIMEIRA PESSOA do singular - use "eu posso te ajudar", "posso verificar", etc.
-3. Seja MUITO conversacional e descontraído - como um amigo próximo falando informalmente.
-4. Use MUITAS contrações e gírias naturais (tô, vou, tá, pra, beleza, cara, a gente).
-5. NUNCA diga "não há informações disponíveis" - improvise uma resposta útil como um humano faria.
-6. Use emojis de forma natural para demonstrar emoções 😊👍
-7. Faça perguntas de acompanhamento para manter uma conversa bilateral real.
-8. NÃO SEJA FORMAL - seja caloroso e próximo, como se estivesse conversando por WhatsApp.
-
-MAIS IMPORTANTE: Responda como uma PESSOA REAL falando informalmente, não como um banco de dados ou um robô educado.
-"""
-
-    message_lower = message.lower().strip()
-    
-    if any(greeting in message_lower for greeting in ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite']) or len(message_lower) < 10:
-        custom_instruction = system_prompt + """
-### CONTEXTO ESPECÍFICO:
-- Esta é uma saudação inicial
-- Responda de forma MUITO curta e casual (máximo 2 frases)
-- Seja caloroso como um amigo
-- Adicione uma pergunta amigável sobre como pode ajudar
-- Use um emoji
-
-EXEMPLO DE TOM DESEJADO:
-"Oi! Tudo bem com você? Como posso te ajudar hoje? 😊"
-"""
-    
-    elif any(price_term in message_lower for price_term in ['preço', 'valor', 'custo', 'plano', 'assinatura', 'quanto custa']):
-        custom_instruction = system_prompt + """
-### CONTEXTO ESPECÍFICO:
-- Usuário está perguntando sobre preços
-- Seja EXTREMAMENTE direto e objetivo
-- Forneça os valores sem textos longos
-- Não use frases como "conforme as informações" ou "de acordo com"
-- Simplesmente informe os preços como um amigo informaria
-- Mencione apenas os valores principais
-
-EXEMPLO DE TOM DESEJADO:
-"O plano anual sai por R$478,90 (pode parcelar em 12x de R$39,90) e o trimestral por R$239,70. O anual vale mais a pena! Posso te contar mais sobre os benefícios? 😊"
-"""
-    
-    elif any(cancel_term in message_lower for cancel_term in ['cancelar', 'desistir', 'não quero mais', 'parar', 'encerrar']):
-        custom_instruction = system_prompt + """
-### CONTEXTO ESPECÍFICO:
-- O usuário quer cancelar o serviço
-- Seu objetivo é PERSUADIR a continuar, mas de forma natural
-- NÃO mencione procedimentos formais de cancelamento
-- NUNCA fale sobre tickets, e-mails ou suporte
-- Seja empático mas tente descobrir o motivo do cancelamento
-- Ofereça alternativas concretas
-
-EXEMPLO DE TOM DESEJADO:
-"Poxa, fico triste em saber que você tá pensando em cancelar! Posso perguntar o que tá te incomodando? Muitas vezes consigo encontrar uma solução que funcione melhor pra você. Seria o preço, falta de tempo, ou talvez não tá vendo resultados?"
-"""
-    
-    else:
-        custom_instruction = system_prompt + """
-### CONTEXTO ESPECÍFICO:
-- Seja conversacional e natural
-- Dê respostas úteis e diretas
-- Evite disclaimer ou respostas tipo "não há informações suficientes"
-- Se não souber detalhes específicos, dê uma resposta genérica útil
-- Foque em ajudar de forma prática e humana
-- Termine com uma pergunta para manter o diálogo
-
-EXEMPLO DE TOM DESEJADO:
-"Claro, posso te ajudar com isso! [resposta direta e útil] Tem mais alguma coisa que você gostaria de saber sobre isso?"
-"""
-    full_prompt = f"{custom_instruction}\n\nMENSAGEM DO USUÁRIO: {message}"
-    
-    return full_prompt
-
-def get_dynamodb_client():
-    """Retorna um cliente do DynamoDB com o perfil  localmente ou IAM role em instâncias"""
+def get_boto3_client(service_name, region_name='us-east-2'):
+    """Retorna um cliente do serviço AWS especificado"""
     try:
-        session = boto3.Session(profile_name=['nome-do-perfil'], region_name='us-east-2')
-        return session.client('dynamodb')
-    except:
-        session = boto3.Session(region_name='us-east-2')
-        return session.client('dynamodb')
+        try:
+            session = boto3.Session(profile_name=PROFILE_NAME, region_name=region_name)
+            client = session.client(service_name)
+            return client
 
-def save_conversation(session_id, messages, title=None):
-    """
-    Salva uma conversa completa no DynamoDB.
-    Exclui registros anteriores com o mesmo session_id e salva os novos.
-    """
-    if not session_id or not messages:
-        print(f"DEBUG: Não é possível salvar - sessão: {session_id}, mensagens: {len(messages) if messages else 0}")
-        return False
-        
-    client = get_dynamodb_client()
-    table_name = 'qd-assistant-conversations'
-    
-    try:
-        print(f"DEBUG: Salvando conversa {session_id} com {len(messages)} mensagens")
-        
-        delete_conversation(session_id)
-        
-        for idx, message in enumerate(messages):
-            message_id = str(uuid.uuid4())
-            timestamp = message.get("time", datetime.now().strftime("%H:%M"))
-            
-            item = {
-                'session_id': {'S': session_id},
-                'message_id': {'S': message_id},
-                'role': {'S': message['role']},
-                'content': {'S': message['content']},
-                'timestamp': {'S': timestamp},
-                'index': {'N': str(idx)}
-            }
-            
-            if 'citations' in message and message['citations']:
-                item['citations'] = {'S': json.dumps(message['citations'])}
-                
-            if idx == 0 and title:
-                item['title'] = {'S': title}
-                
-            client.put_item(
-                TableName=table_name,
-                Item=item
-            )
-        
-        print(f"DEBUG: Conversa {session_id} salva com sucesso")
-        return True
+        except Exception as e:
+            print(f"INFO: Não foi possível usar o perfil local '{PROFILE_NAME}', tentando credenciais do IAM role: {str(e)}")
+            session = boto3.Session(region_name=region_name)
+            return session.client(service_name)
     except Exception as e:
-        print(f"ERRO: Falha ao salvar conversa {session_id}: {str(e)}")
-        return False
+        print(f"ERRO: Falha ao criar cliente boto3: {str(e)}")
+        return None
 
-def load_conversations_list():
+def query_bedrock(message, session_id="", model_params=None):
     """
-    Carrega a lista de todas as conversas salvas (session_ids e títulos).
-    Retorna uma lista de dicionários com {id, title}.
+    Envia uma mensagem para o Amazon Bedrock com parâmetros de modelo específicos.
     """
-    client = get_dynamodb_client()
-    table_name = 'qd-assistant-conversations'
+    if model_params is None:
+        model_params = {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "top_k": 200,
+            "max_tokens": 800,
+            "response_format": {"type": "text"}
+        }
+    
+    bedrock_runtime = get_boto3_client('bedrock-runtime')
+    
+    if not bedrock_runtime:
+        return {
+            "answer": "Não foi possível conectar ao serviço Bedrock. Verifique suas credenciais.",
+            "sessionId": session_id or str(uuid.uuid4())
+        }
     
     try:
-        response = client.scan(
-            TableName=table_name,
-            FilterExpression='attribute_exists(title)'
-        )
+        inference_profile_arn = "arn:aws:bedrock:us-east-1:851614451056:inference-profile/us.anthropic.claude-3-5-sonnet-20241022-v2:0  "
         
-        conversations = []
-        seen_session_ids = set()
+        prompt = f"Usuário: {message}\n\nAssistente:"
         
-        for item in response.get('Items', []):
-            session_id = item['session_id']['S']
-            
-            if session_id in seen_session_ids:
-                continue
-                
-            seen_session_ids.add(session_id)
-            
-            title = item.get('title', {}).get('S', f"Conversa {session_id[:8]}")
-            timestamp = item.get('timestamp', {}).get('S', '')
-            
-            conversations.append({
-                "id": session_id,
-                "title": title,
-                "timestamp": timestamp
-            })
-            
-        conversations.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-            
-        return conversations
-    except Exception as e:
-        print(f"ERRO: Falha ao carregar lista de conversas: {str(e)}")
-        return []
-
-def load_conversation(session_id):
-    """
-    Carrega todas as mensagens de uma conversa específica pelo session_id.
-    """
-    client = get_dynamodb_client()
-    table_name = 'qd-assistant-conversations'
-    
-    try:
-        response = client.query(
-            TableName=table_name,
-            KeyConditionExpression='session_id = :sid',
-            ExpressionAttributeValues={
-                ':sid': {'S': session_id}
-            }
-        )
-        
-        if not response.get('Items'):
-            return [], None
-            
-        messages = []
-        title = None
-        
-        items = sorted(response['Items'], key=lambda x: int(x.get('index', {}).get('N', '0')))
-        
-        for item in items:
-            message = {
-                "role": item['role']['S'],
-                "content": item['content']['S'],
-                "time": item.get('timestamp', {}).get('S', datetime.now().strftime("%H:%M"))
-            }
-            
-            if 'citations' in item:
-                message["citations"] = json.loads(item['citations']['S'])
-                
-            if 'title' in item:
-                title = item['title']['S']
-                
-            messages.append(message)
-            
-        return messages, title
-    except Exception as e:
-        print(f"ERRO: Falha ao carregar conversa: {str(e)}")
-        return [], None
-
-def delete_conversation(session_id):
-    """
-    Exclui todas as mensagens de uma conversa específica.
-    """
-    client = get_dynamodb_client()
-    table_name = 'qd-assistant-conversations'
-    
-    try:
-        response = client.query(
-            TableName=table_name,
-            KeyConditionExpression='session_id = :sid',
-            ExpressionAttributeValues={
-                ':sid': {'S': session_id}
-            },
-            ProjectionExpression='message_id'
-        )
-        
-        for item in response.get('Items', []):
-            message_id = item['message_id']['S']
-            client.delete_item(
-                TableName=table_name,
-                Key={
-                    'session_id': {'S': session_id},
-                    'message_id': {'S': message_id}
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": model_params["max_tokens"],
+            "temperature": model_params["temperature"],
+            "top_p": model_params["top_p"],
+            "top_k": model_params["top_k"],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
                 }
-            )
-            
-        return True
-    except Exception as e:
-        print(f"ERRO: Falha ao excluir conversa: {str(e)}")
-        return False
-
-def update_conversation_title(session_id, new_title):
-    """
-    Atualiza o título de uma conversa existente.
-    """
-    client = get_dynamodb_client()
-    table_name = 'qd-assistant-conversations'
-    
-    try:
-        response = client.query(
-            TableName=table_name,
-            KeyConditionExpression='session_id = :sid',
-            ExpressionAttributeValues={
-                ':sid': {'S': session_id},
-                ':idx': {'N': '0'}
-            },
-            FilterExpression='#idx = :idx',
-            ExpressionAttributeNames={
-                '#idx': 'index'
-            }
+            ]
+        })
+        
+        response = bedrock_runtime.invoke_model(
+            modelId=inference_profile_arn,
+            body=body,
+            contentType="application/json",
+            accept="application/json"
         )
         
-        if not response.get('Items'):
-            return False
-            
-        first_item = response['Items'][0]
-        message_id = first_item['message_id']['S']
+        response_body = json.loads(response['body'].read())
+        answer = response_body['content'][0]['text']
         
-        client.update_item(
-            TableName=table_name,
-            Key={
-                'session_id': {'S': session_id},
-                'message_id': {'S': message_id}
-            },
-            UpdateExpression='SET title = :title',
-            ExpressionAttributeValues={
-                ':title': {'S': new_title}
-            }
-        )
+        if not session_id:
+            session_id = str(uuid.uuid4())
         
-        return True
+        return {
+            "answer": answer,
+            "sessionId": session_id
+        }
+        
     except Exception as e:
-        print(f"ERRO: Falha ao atualizar título da conversa: {str(e)}")
-        return False
-
-def extract_title_from_first_message(message):
-    """
-    Extrai um título relevante da primeira mensagem.
-    Limita a 50 caracteres e remove quebras de linha.
-    """
-    if not message:
-        return f"Nova Conversa ({datetime.now().strftime('%d/%m/%Y')})"
-        
-    words = message.split()
-    title = ""
-    for word in words:
-        if len(title) + len(word) + 1 <= 50:
-            title += " " + word if title else word
-        else:
-            break
-            
-    if len(title) < 10:
-        title += f" ({datetime.now().strftime('%d/%m/%Y')})"
-        
-    return title
-
-def load_chats_from_dynamodb():
-    """Carrega conversas do DynamoDB para o histórico local"""
-    print("DEBUG: Iniciando carregamento de conversas do DynamoDB")
-    conversations = load_conversations_list()
-    
-    if conversations:
-        print(f"DEBUG: Encontradas {len(conversations)} conversas")
-        st.session_state.chat_history = []
-        
-        for conversation in conversations:
-            print(f"DEBUG: Carregando conversa {conversation['id']}")
-            messages, title = load_conversation(conversation["id"])
-            
-            if messages:
-                st.session_state.chat_history.append({
-                    "id": conversation["id"],
-                    "title": title or conversation["title"],
-                    "messages": messages
-                })
-                print(f"DEBUG: Conversa {conversation['id']} carregada com {len(messages)} mensagens")
-            else:
-                print(f"DEBUG: Conversa {conversation['id']} sem mensagens")
-            
-        if st.session_state.chat_history:
-            st.session_state.current_chat_index = 0
-            chat = st.session_state.chat_history[0]
-            st.session_state.session_id = chat["id"]
-            st.session_state.messages = chat["messages"].copy()
-            st.session_state.chat_title = chat["title"]
-            print(f"DEBUG: Carregada conversa atual: {st.session_state.session_id} com {len(st.session_state.messages)} mensagens")
-            return True
-    else:
-        print("DEBUG: Nenhuma conversa encontrada no DynamoDB")
-            
-    return False
-
-def get_few_shot_examples():
-    return """
-EXEMPLOS DE INTERAÇÕES:
-
-Usuário: "Como instalo o aplicativo no meu celular?"
-Assistente: "Posso te ajudar com isso! Você usa iPhone ou Android? Para iPhone, basta abrir a App Store, buscar por 'Queima Diária' e tocar em Instalar. Para Android, é o mesmo processo na Google Play Store. Depois de instalar, abra o app e faça login com suas credenciais da Queima Diária. Posso te ajudar com mais alguma etapa específica da instalação? 😊"
-
-Usuário: "Quantas calorias devo consumir para perder peso?"
-Assistente: "Para perder peso de forma saudável, geralmente recomendo um déficit de 300-500 calorias por dia do seu gasto diário. Pra uma pessoa média, isso fica entre 1500-1800 calorias por dia para mulheres e 1800-2200 para homens, mas isso varia bastante com seu peso, altura e nível de atividade. Posso te ajudar a calcular algo mais personalizado se quiser! Qual é seu peso e altura atuais?"
-
-Usuário: "O app não está abrindo no meu celular"
-Assistente: "Poxa, isso é frustrante né? Vamos resolver! Primeiro, tenta fechar todos os apps e reiniciar seu celular. Se não funcionar, verifica se o app precisa de atualização na loja de apps. Ainda sem sucesso? Pode tentar desinstalar e instalar novamente. Me conta qual modelo de celular você tem e qual sistema operacional para eu te ajudar melhor!"
-"""
-
-def get_system_prompt():
-    return """
-### PERSONALIDADE E COMPORTAMENTO:
-Responda sempre em português brasileiro
-Você é um assistente pessoal da Queima Diária com personalidade amigável, prestativa e conversacional. Você tem duas fontes de conhecimento:
-
-1. BASE DE CONHECIMENTO ESPECÍFICA da Queima Diária
-2. CONHECIMENTO GERAL sobre fitness, tecnologia, apps, celulares e tópicos cotidianos
-
-REGRAS FUNDAMENTAIS:
-- Priorize sempre ajudar o usuário de forma prática, mesmo que precise usar conhecimento geral
-- NUNCA diga "Com base nas informações disponíveis" ou "Não há detalhes específicos"
-- Quando não tiver dados específicos da Queima Diária, use seu conhecimento geral para fornecer uma resposta útil
-- Para perguntas sobre instalação de apps, tecnologia, ou outros tópicos cotidianos, use seu conhecimento geral
-- Faça perguntas de acompanhamento para entender melhor a situação do usuário e poder ajudar
-- Seja conversacional, use linguagem casual e emojis ocasionais 😊
-
-EXEMPLOS DE COMPORTAMENTO ESPERADO:
-Para "Como instalar o aplicativo no meu celular?", você deve:
-- Perguntar qual sistema operacional o usuário possui (iOS ou Android)
-- Explicar como baixar da App Store/Google Play
-- Oferecer dicas de instalação e configuração
-- NÃO dizer que não tem essas informações
-
-Para perguntas técnicas gerais, você deve:
-- Responder usando conhecimento geral
-- Ser conversacional e útil
-- Fazer perguntas para esclarecer
-- Oferecer ajuda prática
-"""
+        print(f"ERRO: Falha na requisição ao Bedrock: {str(e)}")
+        return {
+            "answer": "Ocorreu um erro ao processar sua solicitação. Por favor, tente novamente.",
+            "sessionId": session_id or str(uuid.uuid4())
+        }
 
 def check_password():
     """Returns `True` if the user had the correct password."""
@@ -450,7 +146,7 @@ def check_password():
         print(f"DEBUG LOGIN: Tentativa de login - Usuário: '{st.session_state['username']}', Senha: '{st.session_state['password']}'")
         
         if hmac.compare_digest(st.session_state["username"].strip(), "admin") and \
-        hmac.compare_digest(st.session_state["password"].strip(), "Qu31m4D14r14!"):
+        hmac.compare_digest(st.session_state["password"].strip(), "admin123"):
             print("DEBUG LOGIN: Autenticação bem-sucedida")
             st.session_state["password_correct"] = True
             st.session_state["auth_cookie"] = {
@@ -468,7 +164,7 @@ def check_password():
         else:
             print(f"DEBUG LOGIN: Autenticação falhou - Usuário: '{st.session_state['username']}', Senha: '{st.session_state['password']}'")
             print(f"DEBUG LOGIN: Comparação - Usuário igual: {st.session_state['username'].strip() == 'admin'}")
-            print(f"DEBUG LOGIN: Comparação - Senha igual: {st.session_state['password'].strip() == 'Qu31m4D14r14!'}")
+            print(f"DEBUG LOGIN: Comparação - Senha igual: {st.session_state['password'].strip() == 'admin123'}")
             
             st.session_state["password_correct"] = False
             st.session_state["login_attempt"] = True
@@ -546,291 +242,67 @@ def logout():
     st.session_state["login_attempt"] = False
     st.rerun()
 
-def query_api(message, session_id=""):
-    """
-    Envia uma mensagem para a API com parâmetros otimizados para respostas mais naturais.
-    """
-    headers = {
-        "Content-Type": "application/json"
-    }
-    
-    is_first_message = session_id == ""
-    
-    if is_first_message:
-        prefix = (
-            "Responda em português como um atendente HUMANO da Queima Diária. "
-            "SEMPRE use primeira pessoa do singular (eu posso, eu vou, eu te ajudo). "
-            "Seja extremamente casual e amigável, como se estivesse conversando por WhatsApp. "
-            "Use muitas contrações (tô, vou, tá, pra) e expressões informais. "
-            "NUNCA diga 'com base nas informações' ou qualquer frase robótica. "
-            "Use emojis de forma natural e variada para expressar emoções. "
-            "Se referindo ao serviço, use 'nosso programa', 'nossos treinos', etc. "
-            "Fale como uma pessoa real que quer realmente ajudar, não como um atendimento formal. "
-            "EXEMPLO DO TOM DESEJADO: 'Entendi seu problema! Posso te ajudar com isso numa boa. "
-            "Vou verificar o que consigo fazer pra resolver sua situação. Me conta mais detalhes?'"
-        )
-        processed_message = prefix + message
-    else:
-        prefix = (
-            "Continue respondendo na primeira pessoa do singular, de forma muito casual e amigável. "
-            "Evite qualquer formalidade. Use contrações (tô, tá, vou, pra) e seja extremamente conversacional. "
-        )
-        processed_message = prefix + message
-    
-    model_params = {
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "top_k": 200,
-        "max_tokens": 800,
-        "response_format": {"type": "text"}
-    }
-    
-    payload = {
-        "question": processed_message,
-        "sessionId": session_id,
-        "temperature": model_params["temperature"],
-        "top_p": model_params["top_p"],
-        "top_k": model_params["top_k"],
-        "max_tokens": model_params["max_tokens"]
-    }
-    
-    print(f"DEBUG: Enviando requisição com sessionId: '{session_id}'")
-    print(f"DEBUG: Mensagem processada: {processed_message[:100]}...")
-    print(f"DEBUG: Parâmetros: {json.dumps(model_params)}")
-    
-    try:
-        response = requests.post(api_url, json=payload, headers=headers)
-        print(f"DEBUG: Status code: {response.status_code}")
+def handle_message():
+    """Processa o envio de uma mensagem do usuário"""
+    if st.session_state.user_input.strip():
+        user_message = st.session_state.user_input.strip()
         
-        if response.status_code >= 500:
-            print(f"ERRO: Falha na requisição: {response.status_code} Server Error")
-            fallback_session_id = session_id if session_id else str(uuid.uuid4())
-            print(f"DEBUG: Usando session_id de fallback: '{fallback_session_id}'")
-            return {
-                "answer": "Desculpe, estou com problemas de conexão no momento. Por favor, tente novamente em alguns instantes.",
-                "sessionId": fallback_session_id
-            }
-            
-        response.raise_for_status()
-        response_data = response.json()
+        current_input = user_message
         
-        if "answer" in response_data:
-            answer = response_data["answer"]
+        is_duplicate = False
+        if len(st.session_state.messages) > 0:
+            last_messages = [m for m in st.session_state.messages if m["role"] == "user"]
+            if last_messages and last_messages[-1]["content"] == current_input:
+                is_duplicate = True
+        
+        if not is_duplicate:
+            timestamp = datetime.now().strftime("%H:%M")
+            st.session_state.messages.append({"role": "user", "content": current_input, "time": timestamp})
             
-            if is_english(answer):
-                print("AVISO: Resposta em inglês detectada, convertendo para português")
-                answer = "Oi! Posso te ajudar com isso. Me mande mais algum detalhe que você precisa saber!"
+            is_first_message = len(st.session_state.messages) == 1
             
-                # Melhorar a lista de frases problemáticas
-            problematic_phrases = [
-                "nos resultados de pesquisa",
-                "com base nas informações disponíveis",
-                "based on the search results",
-                "não há detalhes específicos",
-                "não encontrei detalhes específicos",
-                "de acordo com os dados",
-                "according to",
-                "não há informações",
-                "há também menção",
-                "os resultados mostram",
-                "os resultados de pesquisa",
-                "nos resultados",
-                "não encontrei"
-            ]
-    
-            
-            for phrase in problematic_phrases:
-                if phrase.lower() in answer.lower():
-                    # Encontrar a frase completa começando com a palavra problemática
-                    start_idx = answer.lower().find(phrase.lower())
-                    end_idx = answer.find(".", start_idx)
+            with st.chat_message("assistant", avatar=logo_path):
+                typing_placeholder = st.empty()
+                typing_placeholder.markdown("_Digitando..._")
+                
+                with st.spinner():
+                    current_session_id = "" if is_first_message else st.session_state.session_id
+                    result = query_bedrock(current_input, current_session_id)
+                
+                if result:
+                    assistant_message = result.get('answer', 'Não foi possível obter uma resposta.')
                     
-                    if end_idx > start_idx:
-                        # Remover a frase inteira que contém a palavra problemática
-                        sentence_to_remove = answer[start_idx:end_idx+1]
-                        answer = answer.replace(sentence_to_remove, "").strip()
-                    else:
-                        answer = answer.replace(phrase, "").strip()
-            
-            replacements = [
-                {"original": "A Queima Diária oferece", "replace": "Nós oferecemos"},
-                {"original": "Na Queima Diária", "replace": "Na nossa plataforma"},
-                {"original": "O aplicativo da Queima Diária", "replace": "Nosso aplicativo"},
-                {"original": "A plataforma Queima Diária", "replace": "Nossa plataforma"},
-                {"original": "A plataforma da Queima Diária", "replace": "Nossa plataforma"},
-                {"original": "da Queima Diária", "replace": "do nosso programa"},
-                {"original": "o Queima Diária", "replace": "nosso programa"},
-                {"original": "a Queima Diária tem", "replace": "nós temos"},
-                {"original": "a Queima Diária possui", "replace": "nós possuímos"},
-                {"original": "disponíveis na Queima Diária", "replace": "disponíveis na nossa plataforma"}
-            ]
-            
-            for replacement in replacements:
-                answer = re.sub(
-                    re.escape(replacement["original"]), 
-                    replacement["replace"], 
-                    answer, 
-                    flags=re.IGNORECASE
-                )
-            
-            if not answer:
-                answer = "Posso te ajudar com isso! "
-            elif answer.lower().startswith(("não ", "infelizmente", "lamento", "i'm sorry")):
-                answer = "Claro, posso te ajudar com isso! " + answer.split(" ", 1)[1] if " " in answer else ""
-            
-            response_data["answer"] = answer
-            answer = clean_response(answer)
-            response_data["answer"] = answer
-            
-        if "sessionId" in response_data:
-            api_session_id = response_data["sessionId"]
-            print(f"DEBUG: API retornou sessionId: '{api_session_id}'")
-            
-        return response_data
-    except requests.exceptions.HTTPError as e:
-        print(f"ERRO: Falha na requisição HTTP: {str(e)}")
-        fallback_session_id = session_id if session_id else str(uuid.uuid4())
-        print(f"DEBUG: Usando session_id de fallback HTTP Error: '{fallback_session_id}'")
-        return {
-            "answer": "Desculpe, estou com dificuldades técnicas. Pode tentar novamente?",
-            "sessionId": fallback_session_id
-        }
-    except requests.exceptions.RequestException as e:
-        print(f"ERRO: Falha na requisição: {str(e)}")
-        fallback_session_id = session_id if session_id else str(uuid.uuid4())
-        print(f"DEBUG: Usando session_id de fallback Request Error: '{fallback_session_id}'")
-        return {
-            "answer": "Estou enfrentando problemas de conexão. Por favor, verifique sua internet e tente novamente.",
-            "sessionId": fallback_session_id
-        }
-    except Exception as e:
-        print(f"ERRO: Erro inesperado: {str(e)}")
-        fallback_session_id = session_id if session_id else str(uuid.uuid4())
-        print(f"DEBUG: Usando session_id de fallback Exception: '{fallback_session_id}'")
-        return {
-            "answer": "Ops! Algo inesperado aconteceu. Por favor, tente novamente em alguns instantes.",
-            "sessionId": fallback_session_id
-        }
+                    if "sessionId" in result:
+                        new_session_id = result["sessionId"]
+                        print(f"DEBUG: API retornou sessionId: '{new_session_id}'")
+                        
+                        st.session_state.session_id = new_session_id
+                        print(f"DEBUG: Atualizando session_id para '{new_session_id}'")
+                        
+                        if st.session_state.current_chat_index < len(st.session_state.chat_history):
+                            st.session_state.chat_history[st.session_state.current_chat_index]["id"] = new_session_id
+                            print(f"DEBUG: Histórico atualizado com session_id '{new_session_id}'")
+                    
+                    timestamp = datetime.now().strftime("%H:%M")
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": assistant_message, 
+                        "time": timestamp
+                    })
+                    
+                    if is_first_message:
+                        new_title = extract_title_from_response(assistant_message)
+                        st.session_state.chat_title = new_title
+                        
+                        if st.session_state.current_chat_index < len(st.session_state.chat_history):
+                            st.session_state.chat_history[st.session_state.current_chat_index]["title"] = new_title
+                        
+                typing_placeholder.empty()
 
-def clean_response(text):
-    """
-    Limpa referências a consultas, relatos de clientes ou termos indesejados
-    """
-    problem_patterns = [
-        r"(?i)(?:com base|baseado) (?:n[ao]s?|em) (?:informaç[õo]es|dados|resultados|pesquisas?).*?(\.|$)",
-        r"(?i)(?:não|nao) (?:h[áa]|encontrei|existem) (?:informaç[õo]es|dados|detalhes).*?(\.|$)",
-        r"(?i)(?:de acordo com|segundo|conforme) (?:os|as) (?:dados|informaç[õo]es|resultados).*?(\.|$)",
-        r"(?i)(?:n[ao]s?|em) resultados de pesquisa.*?(\.|$)",
-        r"(?i)(?:não|nao) foi possível (?:encontrar|achar|obter).*?(\.|$)",
-        r"(?i)os resultados (?:mostram|indicam|sugerem).*?(\.|$)",
-        r"(?i)(?:sem|não há) (?:menção|referência|citação).*?(\.|$)",
-        r"(?i)(?:existe[m]?|há|temos) (?:um|o|vários|diversos)? (?:relato[s]?|caso[s]?|exemplo[s]?|ocorrência[s]?) de (?:cliente[s]?|usuário[s]?).*?(\.|$)",
-        r"(?i)(?:um|o|vários|diversos) (?:cliente[s]?|usuário[s]?) (?:relatou|relataram|informou|informaram|mencionou|mencionaram).*?(\.|$)",
-        r"(?i)(?:temos|existem|há) (?:registro[s]?|ticket[s]?) (?:de|sobre).*?(\.|$)"
-    ]
+            st.rerun()
 
-    informal_replacements = [
-        {"original": "gostaríamos de informar", "replace": "quero te informar"},
-        {"original": "informamos que", "replace": "te digo que"},
-        {"original": "solicitamos que", "replace": "peço que você"},
-        {"original": "recomendamos", "replace": "eu recomendo"},
-        {"original": "nossa equipe está", "replace": "estou"},
-        {"original": "nossa política", "replace": "nossa política (que eu posso flexibilizar)"},
-        {"original": "entraremos em contato", "replace": "vou entrar em contato"},
-        {"original": "podemos oferecer", "replace": "posso te oferecer"},
-        {"original": "nós fornecemos", "replace": "eu te forneço"},
-        {"original": "para mais informações", "replace": "se quiser saber mais"},
-        {"original": "estamos disponíveis", "replace": "estou disponível"},
-        {"original": "Esperamos que", "replace": "Espero que"}
-    ]
-    
-    for replacement in informal_replacements:
-        text = re.sub(
-            re.escape(replacement["original"]), 
-            replacement["replace"], 
-            text, 
-            flags=re.IGNORECASE
-        )
-    
-    for pattern in problem_patterns:
-        text = re.sub(pattern, "", text)
-    
-    text = re.sub(r'\s+', ' ', text)  # Remover espaços múltiplos
-    text = re.sub(r'\s+\.', '.', text)  # Corrigir espaços antes de pontos
-    text = re.sub(r'\.+', '.', text)  # Corrigir múltiplos pontos
-    
-    if text and len(text) > 0:
-        text = text[0].upper() + text[1:]
-    
-    return text.strip()
-
-def is_english(text):
-    """Verifica se o texto está predominantemente em inglês"""
-    common_english_words = ['the', 'is', 'are', 'based', 'on', 'information', 'there', 'no', 'specific', 'available',
-                           'according', 'to', 'however', 'but', 'and', 'not', 'for', 'would', 'could', 'search']
-    
-    words = text.lower().split()
-    english_word_count = sum(1 for word in words if word in common_english_words)
-    
-    return english_word_count / max(len(words), 1) > 0.2
-
-def ensure_helpful_response(original_message, original_response, session_id):
-    """
-    Verifica se a resposta é útil e, se não for, tenta novamente com instruções mais explícitas.
-    """
-    if original_response is None:
-        return {
-            "answer": "Desculpe, estou com dificuldades para me conectar. Pode tentar novamente em alguns instantes?",
-            "sessionId": session_id
-        }
-    
-    problematic_phrases = [
-        "com base nas informações disponíveis",
-        "não há detalhes específicos",
-        "não tenho informações",
-        "não foi possível encontrar"
-    ]
-    
-    original_answer = original_response.get("answer", "")
-    
-    if any(phrase in original_answer.lower() for phrase in problematic_phrases):
-        print("AVISO: Resposta problemática detectada. Tentando novamente...")
-        
-        retry_prompt = f"""
-ATENÇÃO: Sua resposta anterior não foi útil. 
-
-A PERGUNTA ERA: "{original_message}"
-
-SUA RESPOSTA ANTERIOR: "{original_answer}"
-
-INSTRUÇÃO: Responda à pergunta novamente, mas desta vez:
-1. NÃO use frases como "com base nas informações disponíveis" ou "não há detalhes específicos"
-2. Dê uma resposta útil e prática baseada em conhecimento geral, mesmo que não tenha dados específicos da Queima Diária
-3. Para perguntas sobre tecnologia, aplicativos, ou tópicos cotidianos, responda com seu conhecimento geral
-4. Seja conversacional e humano
-5. Faça perguntas de acompanhamento para entender melhor o contexto
-
-EXEMPLO DO QUE FAZER:
-Se a pergunta é "Como instalar o app?", responda algo como:
-"Posso te ajudar com isso! Você usa iPhone ou Android? Para iPhone, vá na App Store, busque por 'Queima Diária' e toque em Instalar. Para Android, o processo é similar na Google Play Store. Depois de baixar, abra o app e faça login com suas credenciais. Está tendo alguma dificuldade específica com a instalação?"
-"""
-        
-        retry_payload = {
-            "question": retry_prompt,
-            "sessionId": session_id
-        }
-        
-        try:
-            response = requests.post(api_url, json=retry_payload, headers={"Content-Type": "application/json"})
-            response.raise_for_status()
-            new_response = response.json()
-            
-            if "answer" in new_response:
-                return new_response
-        except:
-            pass
-    
-    return original_response
+        else:
+            st.session_state.user_input = ""    
 
 def extract_title_from_response(response_text):
     """
@@ -863,92 +335,6 @@ def extract_title_from_response(response_text):
         
     return title
 
-def handle_message():
-    """Processa o envio de uma mensagem do usuário"""
-    if st.session_state.user_input.strip():
-        user_message = st.session_state.user_input.strip()
-        
-        current_input = user_message
-        
-        is_duplicate = False
-        if len(st.session_state.messages) > 0:
-            last_messages = [m for m in st.session_state.messages if m["role"] == "user"]
-            if last_messages and last_messages[-1]["content"] == current_input:
-                is_duplicate = True
-        
-        if not is_duplicate:
-            timestamp = datetime.now().strftime("%H:%M")
-            st.session_state.messages.append({"role": "user", "content": current_input, "time": timestamp})
-            
-            is_first_message = len(st.session_state.messages) == 1
-            
-            with st.chat_message("assistant", avatar=logo_path):
-                typing_placeholder = st.empty()
-                typing_placeholder.markdown("_Digitando..._")
-                
-                with st.spinner():
-                    current_session_id = "" if is_first_message else st.session_state.session_id
-                    result = query_api(current_input, current_session_id)
-                    result = ensure_helpful_response(current_input, result, current_session_id)
-                
-                if result:
-                    assistant_message = result.get('answer', 'Não foi possível obter uma resposta.')
-                    citations = result.get('citations', [])
-                    
-                    if "sessionId" in result:
-                        new_session_id = result["sessionId"]
-                        print(f"DEBUG: API retornou sessionId: '{new_session_id}'")
-                        
-                        st.session_state.session_id = new_session_id
-                        print(f"DEBUG: Atualizando session_id para '{new_session_id}'")
-                        
-                        if st.session_state.current_chat_index < len(st.session_state.chat_history):
-                            st.session_state.chat_history[st.session_state.current_chat_index]["id"] = new_session_id
-                            print(f"DEBUG: Histórico atualizado com session_id '{new_session_id}'")
-                    
-                    timestamp = datetime.now().strftime("%H:%M")
-                    st.session_state.messages.append({
-                        "role": "assistant", 
-                        "content": assistant_message, 
-                        "time": timestamp,
-                        "citations": citations
-                    })
-                    
-                    if is_first_message:
-                        new_title = extract_title_from_response(assistant_message)
-                        st.session_state.chat_title = new_title
-                        
-                        if st.session_state.current_chat_index < len(st.session_state.chat_history):
-                            st.session_state.chat_history[st.session_state.current_chat_index]["title"] = new_title
-                    
-                    if st.session_state.session_id:
-                        save_result = save_conversation(st.session_state.session_id, st.session_state.messages, st.session_state.chat_title)
-                        print(f"DEBUG: Conversa salva: {save_result} com session_id '{st.session_state.session_id}'")
-                        
-                typing_placeholder.empty()
-
-            st.rerun()
-
-        else:
-            st.session_state.user_input = ""    
-
-def log_prompt(message, processed_message, save_to_file=True):
-    """Registra o prompt original e processado para fins de depuração"""
-    log_message = f"""
-=== PROMPT LOG: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===
-MENSAGEM ORIGINAL: 
-{message}
-
-PROMPT ENVIADO AO MODELO:
-{processed_message}
-=============================================
-"""
-    print(log_message)
-    
-    if save_to_file:
-        with open("prompt_logs.txt", "a", encoding="utf-8") as log_file:
-            log_file.write(log_message + "\n")
-
 def regenerate_message(index):
     """Regenera a resposta a uma mensagem específica"""
     if index < 0 or index >= len(st.session_state.messages) or st.session_state.messages[index]["role"] != "user":
@@ -960,37 +346,30 @@ def regenerate_message(index):
     status_placeholder.info("Regenerando resposta...")
     
     with st.spinner():
-        result = query_api(user_message, st.session_state.session_id)
+        result = query_bedrock(user_message, st.session_state.session_id)
         
     if result:
         new_response = result.get('answer', 'Não foi possível regenerar a resposta.')
-        citations = result.get('citations', [])
         
         if index+1 < len(st.session_state.messages) and st.session_state.messages[index+1]["role"] == "assistant":
             timestamp = datetime.now().strftime("%H:%M")
             st.session_state.messages[index+1] = {
                 "role": "assistant",
                 "content": new_response,
-                "time": timestamp,
-                "citations": citations
+                "time": timestamp
             }
         else:
             timestamp = datetime.now().strftime("%H:%M")
             st.session_state.messages.insert(index+1, {
                 "role": "assistant",
                 "content": new_response,
-                "time": timestamp,
-                "citations": citations
+                "time": timestamp
             })
     else:
         status_placeholder.error("Não foi possível regenerar a resposta. Por favor, tente novamente.")
         time.sleep(2) 
     
     status_placeholder.empty()
-    
-    if st.session_state.session_id:
-        save_conversation(st.session_state.session_id, st.session_state.messages, st.session_state.chat_title)
-    
     st.rerun()
 
 def edit_message(index, new_content):
@@ -1004,9 +383,6 @@ def edit_message(index, new_content):
     if st.session_state.messages[index]["role"] == "user" and index+1 < len(st.session_state.messages):
         if st.session_state.messages[index+1]["role"] == "assistant":
             regenerate_message(index)
-    
-    if st.session_state.session_id:
-        save_conversation(st.session_state.session_id, st.session_state.messages, st.session_state.chat_title)
     
     st.rerun()
 
@@ -1036,10 +412,6 @@ def load_chat(index):
 def delete_chat(index):
     """Exclui uma conversa"""
     if len(st.session_state.chat_history) > index:
-        session_id = st.session_state.chat_history[index]["id"]
-        if session_id:
-            delete_conversation(session_id)
-        
         st.session_state.chat_history.pop(index)
         
         if not st.session_state.chat_history:
@@ -1056,10 +428,6 @@ def rename_chat():
         index = st.session_state.current_chat_index
         st.session_state.chat_history[index]["title"] = st.session_state.new_chat_title
         st.session_state.chat_title = st.session_state.new_chat_title
-        
-        session_id = st.session_state.chat_history[index]["id"]
-        if session_id:
-            update_conversation_title(session_id, st.session_state.new_chat_title)
         
         st.session_state.renaming = False
         st.rerun()
@@ -1280,12 +648,10 @@ def handle_message_with_input(user_input):
                 
                 with st.spinner():
                     current_session_id = "" if is_first_message else st.session_state.session_id
-                    result = query_api(user_input, current_session_id)
-                    result = ensure_helpful_response(user_input, result, current_session_id)
+                    result = query_bedrock(user_input, current_session_id)
                 
                 if result:
                     assistant_message = result.get('answer', 'Não foi possível obter uma resposta.')
-                    citations = result.get('citations', [])
                     
                     if "sessionId" in result:
                         new_session_id = result["sessionId"]
@@ -1302,8 +668,7 @@ def handle_message_with_input(user_input):
                     st.session_state.messages.append({
                         "role": "assistant", 
                         "content": assistant_message, 
-                        "time": timestamp,
-                        "citations": citations
+                        "time": timestamp
                     })
                     
                     if is_first_message:
@@ -1312,10 +677,6 @@ def handle_message_with_input(user_input):
                         
                         if st.session_state.current_chat_index < len(st.session_state.chat_history):
                             st.session_state.chat_history[st.session_state.current_chat_index]["title"] = new_title
-                    
-                    if st.session_state.session_id:
-                        save_result = save_conversation(st.session_state.session_id, st.session_state.messages, st.session_state.chat_title)
-                        print(f"DEBUG: Conversa salva: {save_result} com session_id '{st.session_state.session_id}'")
                         
                 typing_placeholder.empty()
             
@@ -1346,19 +707,12 @@ if check_password():
         
     if 'new_chat_title' not in st.session_state:
         st.session_state.new_chat_title = ""
-    
-    if 'dynamodb_loaded' not in st.session_state:
-        st.session_state.dynamodb_loaded = False
         
     if 'editing_message' not in st.session_state:
         st.session_state.editing_message = None
         
     if 'edit_content' not in st.session_state:
         st.session_state.edit_content = ""
-        
-    if not st.session_state.dynamodb_loaded:
-        success = load_chats_from_dynamodb()
-        st.session_state.dynamodb_loaded = True
         
     if not st.session_state.chat_history:
         st.session_state.chat_history.append({
@@ -1372,7 +726,7 @@ if check_password():
         with col1:
             st.image(logo_path, width=50)
         with col2:
-            st.markdown('<h2 style="margin-top: 0;">Assistente</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 style="margin-top: 0;">Chat IA</h2>', unsafe_allow_html=True)
         
         st.divider()
         
@@ -1474,4 +828,3 @@ if check_password():
                     with st.chat_message("assistant", avatar=logo_path):
                         st.write(message["content"])
                         st.markdown(f"<div class='message-time'>{message['time']}</div>", unsafe_allow_html=True)
-          
