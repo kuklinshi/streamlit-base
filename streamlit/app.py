@@ -44,7 +44,7 @@ def add_javascript():
 
 #alterar
 st.set_page_config(
-   page_title="NOME DA PÁGINA",
+   page_title="CHAT DA PREVISÃO DO TEMPO",
    page_icon="logo.jpeg",
    layout="wide",
    initial_sidebar_state="expanded"
@@ -93,10 +93,10 @@ def query_bedrock(message, session_id="", model_params=None, context=""):
     #ALTERAR
     if model_params is None:
         model_params = {
-            "temperature": 1.0,
-            "top_p": 0.85,
-            "top_k": 200,
-            "max_tokens": 800,
+            "temperature": 0.6,
+            "top_p": 0.7,
+            "top_k": 50,
+            "max_tokens": 2048,
             "response_format": {"type": "text"}
         }
     
@@ -901,9 +901,9 @@ if check_password():
     with st.sidebar:
         col1, col2 = st.columns([1, 3])
         with col1:
-            st.image(logo_path, width=50)
+            st.image(logo_path, width=100)
         with col2:
-            st.markdown('<h2 style="margin-top: 0;">Chat IA</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 style="margin-top: 0;">SIX AI</h2>', unsafe_allow_html=True)
         
         st.divider()
         
