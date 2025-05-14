@@ -9,10 +9,14 @@ from datetime import datetime
 import re
 import base64
 import os
-from functions import generate_chat_prompt, format_context, read_csv, read_pdf, read_txt
+from functions import (
+    generate_chat_prompt, format_context, 
+    read_pdf_from_uploaded_file, read_txt_from_uploaded_file, read_csv_from_uploaded_file
+)
+PROFILE_NAME = os.environ.get("AWS_PROFILE", "edn174")
 
-PROFILE_NAME = os.environ.get("AWS_PROFILE", "edn173")
 INFERENCE_PROFILE_ARN = "arn:aws:bedrock:us-east-1:851614451056:inference-profile/us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+
 def add_javascript():
     """Adiciona JavaScript para melhorar a interação do usuário com o chat"""
     js_code = """
@@ -38,8 +42,9 @@ def add_javascript():
     """
     st.components.v1.html(js_code, height=0)
 
+#alterar
 st.set_page_config(
-   page_title="Chat Genérico",
+   page_title="NOME DA PÁGINA",
    page_icon="logo.jpeg",
    layout="wide",
    initial_sidebar_state="expanded"
@@ -53,7 +58,7 @@ def preprocess_user_message(message):
     """
     return message
 
-def get_boto3_client(service_name, region_name='us-east-1', profile_name='edn173'):
+def get_boto3_client(service_name, region_name='us-east-1', profile_name='edn174'):
     """
     Retorna um cliente do serviço AWS especificado.
     
@@ -85,10 +90,11 @@ def query_bedrock(message, session_id="", model_params=None, context=""):
     """
     Envia uma mensagem para o Amazon Bedrock com parâmetros de modelo específicos.
     """
+    #ALTERAR
     if model_params is None:
         model_params = {
             "temperature": 1.0,
-            "top_p": 0.95,
+            "top_p": 0.85,
             "top_k": 200,
             "max_tokens": 800,
             "response_format": {"type": "text"}
@@ -103,8 +109,6 @@ def query_bedrock(message, session_id="", model_params=None, context=""):
         }
     
     try:
-        inference_profile_arn = "arn:aws:bedrock:us-east-1:851614451056:inference-profile/us.anthropic.claude-3-5-sonnet-20241022-v2:0  "
-        
         prompt = generate_chat_prompt(message, context=context)
         
         body = json.dumps({
@@ -262,86 +266,174 @@ def get_rag_context():
     if st.session_state.get('use_rag', False):
         if st.session_state.rag_source == "Arquivo":
             if st.session_state.uploaded_file is not None:
-                if st.session_state.file_type == "PDF":
-                    return format_context(read_pdf(st.session_state.uploaded_file), "Contexto do PDF")
-            elif st.session_state.file_type == "TXT":
-                return format_context(read_txt(st.session_state.uploaded_file), "Contexto do TXT")
-            elif st.session_state.file_type == "CSV":
-                return format_context(read_csv(st.session_state.uploaded_file), "Contexto do CSV")
-            else:
-                return ""
-     
+                file_type = st.session_state.file_type
+                file = st.session_state.uploaded_file
+                if file_type == "PDF":
+                    return format_context(read_pdf_from_uploaded_file(file), f"Contexto do arquivo PDF: {file.name}")
+                elif file_type == "TXT":
+                    return format_context(read_txt_from_uploaded_file(file), f"Contexto do arquivo TXT: {file.name}")
+                elif file_type == "CSV":
+                    return format_context(read_csv_from_uploaded_file(file), f"Contexto do arquivo CSV: {file.name}")
+        
         elif st.session_state.rag_source == "Texto Direto":
-     
-            return format_context(st.session_state.direct_text, "Contexto do Usuário")
+            if st.session_state.direct_text:
+                return format_context(st.session_state.direct_text, "Contexto do Usuário")
+    
     return ""
 
 def handle_message():
     """Processa o envio de uma mensagem do usuário"""
     if st.session_state.user_input.strip():
-      user_message = st.session_state.user_input.strip()
-      
-      current_input = user_message
-      
-      is_duplicate = False
-      if len(st.session_state.messages) > 0:
-        last_messages = [m for m in st.session_state.messages if m["role"] == "user"]
-        if last_messages and last_messages[-1]["content"] == current_input:
-          is_duplicate = True
-      
-      if not is_duplicate:
-        timestamp = datetime.now().strftime("%H:%M")
-        st.session_state.messages.append({"role": "user", "content": current_input, "time": timestamp})
+        user_message = st.session_state.user_input.strip()
         
-        is_first_message = len(st.session_state.messages) == 1
+        current_input = user_message
         
-        with st.chat_message("assistant", avatar=logo_path):
-          typing_placeholder = st.empty()
-          typing_placeholder.markdown("_Digitando..._")
-          
-          with st.spinner():
-            current_session_id = "" if is_first_message else st.session_state.session_id
-            
-            rag_context = get_rag_context()
-            
-            final_prompt = f"{user_message} \[ANEXO] {rag_context}" if rag_context else user_message
-            
-            result = query_bedrock(final_prompt, current_session_id)
-         
-          if result:
-            assistant_message = result.get('answer', 'Não foi possível obter uma resposta.')
-            
-            if "sessionId" in result:
-              new_session_id = result["sessionId"]
-              print(f"DEBUG: API retornou sessionId: '{new_session_id}'")
-              
-              st.session_state.session_id = new_session_id
-              print(f"DEBUG: Atualizando session_id para '{new_session_id}'")
-              
-              if st.session_state.current_chat_index < len(st.session_state.chat_history):
-                st.session_state.chat_history[st.session_state.current_chat_index]["id"] = new_session_id
-                print(f"DEBUG: Histórico atualizado com session_id '{new_session_id}'")
-            
+        is_duplicate = False
+        if len(st.session_state.messages) > 0:
+            last_messages = [m for m in st.session_state.messages if m["role"] == "user"]
+            if last_messages and last_messages[-1]["content"] == current_input:
+                is_duplicate = True
+        
+        if not is_duplicate:
             timestamp = datetime.now().strftime("%H:%M")
-            st.session_state.messages.append({
-              "role": "assistant", 
-              "content": assistant_message, 
-              "time": timestamp
-            })
             
-            if is_first_message:
-              new_title = extract_title_from_response(assistant_message)
-              st.session_state.chat_title = new_title
-              
-              if st.session_state.current_chat_index < len(st.session_state.chat_history):
-                st.session_state.chat_history[st.session_state.current_chat_index]["title"] = new_title
-              
-          typing_placeholder.empty()
+            attached_file = st.session_state.get('file_to_send', None)
+            file_content = ""
+            file_info = ""
+            
+            if attached_file is not None:
+                file_extension = attached_file.name.split('.')[-1].lower()
+                
+                if file_extension == 'pdf':
+                    file_content = read_pdf_from_uploaded_file(attached_file)
+                elif file_extension == 'txt':
+                    file_content = read_txt_from_uploaded_file(attached_file)
+                elif file_extension in ['csv', 'xls', 'xlsx']:
+                    file_content = read_csv_from_uploaded_file(attached_file)
+                elif file_extension in ['doc', 'docx']:
+                    file_content = "Arquivo do Word anexado (processamento de conteúdo não disponível)"
+                
+                file_info = f"\n[Arquivo anexado: {attached_file.name}]"
+                
+                user_message_with_attachment = f"{user_message}{file_info}"
+                
+                st.session_state.messages.append({"role": "user", "content": user_message_with_attachment, "time": timestamp})
+            else:
+                st.session_state.messages.append({"role": "user", "content": user_message, "time": timestamp})
+            
+            is_first_message = len(st.session_state.messages) == 1
+            
+            with st.chat_message("assistant", avatar=logo_path):
+                typing_placeholder = st.empty()
+                typing_placeholder.markdown("_Digitando..._")
+                
+                with st.spinner():
+                    current_session_id = "" if is_first_message else st.session_state.session_id
+                    
+                    rag_context = get_rag_context()
+                    
+                    if file_content:
+                        file_context = format_context(file_content, f"Conteúdo do arquivo anexado ({attached_file.name})")
+                        if rag_context:
+                            combined_context = f"{rag_context}\n{file_context}"
+                        else:
+                            combined_context = file_context
+                    else:
+                        combined_context = rag_context
+                    
+                    result = query_bedrock(user_message, current_session_id, context=combined_context)
+                
+                if result:
+                    assistant_message = result.get('answer', 'Não foi possível obter uma resposta.')
+                    
+                    if "sessionId" in result:
+                        new_session_id = result["sessionId"]
+                        print(f"DEBUG: API retornou sessionId: '{new_session_id}'")
+                        
+                        st.session_state.session_id = new_session_id
+                        print(f"DEBUG: Atualizando session_id para '{new_session_id}'")
+                        
+                        if st.session_state.current_chat_index < len(st.session_state.chat_history):
+                            st.session_state.chat_history[st.session_state.current_chat_index]["id"] = new_session_id
+                            print(f"DEBUG: Histórico atualizado com session_id '{new_session_id}'")
+                    
+                    timestamp = datetime.now().strftime("%H:%M")
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": assistant_message, 
+                        "time": timestamp
+                    })
+                    
+                    if is_first_message:
+                        new_title = extract_title_from_response(assistant_message)
+                        st.session_state.chat_title = new_title
+                        
+                        if st.session_state.current_chat_index < len(st.session_state.chat_history):
+                            st.session_state.chat_history[st.session_state.current_chat_index]["title"] = new_title
+                    
+                typing_placeholder.empty()
+                
+                if 'file_uploader_key' not in st.session_state:
+                    st.session_state.file_uploader_key = "file_to_send_0"
 
-        st.rerun()
 
-      else:
-        st.session_state.user_input = ""  
+            st.rerun()
+
+        else:
+            st.session_state.user_input = ""
+
+def add_javascript():
+    """Adiciona JavaScript para melhorar a interação do usuário com o chat"""
+    js_code = """
+    <script>
+    // Fazer com que a tecla Enter submeta o formulário
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            const textarea = document.querySelector('textarea');
+            if (textarea) {
+                textarea.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        const sendButton = document.querySelector('button[data-testid="baseButton-secondary"]');
+                        if (sendButton) {
+                            sendButton.click();
+                        }
+                    }
+                });
+            }
+            
+            // Mostrar o nome do arquivo quando for anexado
+            const fileUploader = document.querySelector('.stFileUploader');
+            if (fileUploader) {
+                const observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        if (mutation.type === 'childList' && mutation.addedNodes.length) {
+                            const fileInfo = fileUploader.querySelector('.uploadedFileName');
+                            if (fileInfo) {
+                                const fileName = fileInfo.textContent.trim();
+                                // Adicionando uma mensagem ao lado do input
+                                const inputContainer = document.querySelector('.input-container');
+                                let fileStatus = document.querySelector('.file-attached');
+                                
+                                if (!fileStatus) {
+                                    fileStatus = document.createElement('div');
+                                    fileStatus.className = 'file-attached';
+                                    inputContainer.insertBefore(fileStatus, inputContainer.firstChild);
+                                }
+                                
+                                fileStatus.innerHTML = '<i class="fas fa-paperclip"></i> ' + fileName;
+                            }
+                        }
+                    });
+                });
+                
+                observer.observe(fileUploader, { childList: true, subtree: true });
+            }
+        }, 1000); // Pequeno atraso para garantir que os elementos foram carregados
+    });
+    </script>
+    """
+    st.components.v1.html(js_code, height=0)
 
 def extract_title_from_response(response_text):
     """
@@ -628,6 +720,40 @@ st.markdown("""
     ::-webkit-scrollbar-thumb:hover {
         background: #45a049;
     }
+    .attach-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 70px;
+        color: #4CAF50;
+        cursor: pointer;
+        font-size: 20px;
+    }
+    
+    /* Adicionando Font Awesome para o ícone */
+    @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css');
+    
+    /* Estilo para indicar quando um arquivo foi anexado */
+    .file-attached {
+        background-color: rgba(76, 175, 80, 0.1);
+        border-radius: 4px;
+        padding: 4px;
+        margin-bottom: 5px;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .file-attached i {
+        margin-right: 5px;
+    }
+    
+    /* Estilo para o botão de remover anexo */
+    .remove-file {
+        color: #f44336;
+        cursor: pointer;
+    }
     
     /* Esconder elementos Streamlit */
     #MainMenu {visibility: hidden;}
@@ -687,7 +813,8 @@ def handle_message_with_input(user_input):
                 
                 with st.spinner():
                     current_session_id = "" if is_first_message else st.session_state.session_id
-                    result = query_bedrock(user_input, current_session_id)
+                    rag_context = get_rag_context()
+                    result = query_bedrock(user_input, current_session_id, context=rag_context)
                 
                 if result:
                     assistant_message = result.get('answer', 'Não foi possível obter uma resposta.')
@@ -818,8 +945,12 @@ if check_password():
                 st.session_state.uploaded_file = uploaded_file
 
             elif rag_source == "Texto Direto":
-                direct_text = st.text_area("Inserir Texto de Contexto", value=st.session_state.direct_text, key="direct_text")
-                st.session_state.direct_text = direct_text
+                direct_text = st.text_area(
+                    "Inserir Texto de Contexto", 
+                    value=st.session_state.get('direct_text', ''),
+                    height=150, 
+                    key="direct_text"
+                )
             st.divider()
 
             if st.button("Logout", use_container_width=True):
@@ -851,12 +982,20 @@ if check_password():
         
         st.markdown('<div class="input-container">', unsafe_allow_html=True)
         
-        col1, col2 = st.columns([6, 1])
+        st.markdown('<div class="input-container">', unsafe_allow_html=True)
+
+        col1, col2, col3 = st.columns([5, 1, 1])
+
         with col1:
             st.text_area("Mensagem", placeholder="Digite sua mensagem aqui...", key="user_input", 
                 height=70, label_visibility="collapsed")
 
         with col2:
+            file_to_send = st.file_uploader("Anexar arquivo", type=["pdf", "txt", "csv", "doc", "docx", "xls", "xlsx"], 
+                                        key="file_to_send", label_visibility="collapsed")
+            st.markdown('<div class="attach-icon" title="Anexar arquivo"><i class="fas fa-paperclip"></i></div>', unsafe_allow_html=True)
+
+        with col3:
             if st.button("Enviar", key="send_button", use_container_width=True):
                 if st.session_state.user_input and st.session_state.user_input.strip():
                     handle_message()

@@ -6,9 +6,9 @@ import os
 import pandas as pd
 import PyPDF2
 
-PROFILE_NAME = os.environ.get('AWS_PROFILE', 'edn173')
+PROFILE_NAME = os.environ.get('AWS_PROFILE', 'edn174')
 
-def get_boto3_client(service_name, region_name='us-east-1', profile_name='edn173'):
+def get_boto3_client(service_name, region_name='us-east-1', profile_name='edn174'):
     """
     Retorna um cliente do serviço AWS especificado.
     
@@ -68,13 +68,14 @@ def format_context(context, source="Contexto Adicional"):
     """Formata o contexto para ser adicionado ao prompt."""
     return f"\n\n{source}:\n{context}\n\n"
 
+#ALTERAR
 def generate_chat_prompt(user_message, conversation_history=None, context=""):
     """
     Gera um prompt de chat completo com histórico de conversa e contexto opcional.
     """
     system_prompt = """
-    Você é um assistente virtual amigável e prestativo da Lojas Caribe,s. Sua função é auxiliar o usuário de forma clara, 
-    educada e eficiente. Forneça respostas diretas e úteis para as perguntas ou solicitações do usuário.
+    Você é o atendente virtual do Hospital Central. Atenda os pacientes de acordo. 
+    Seja sério, não pergunte o nome, faça a triagem médica. 
     """
 
     conversation_context = ""
@@ -90,7 +91,8 @@ def generate_chat_prompt(user_message, conversation_history=None, context=""):
     
     return full_prompt
 
-def invoke_bedrock_model(prompt, inference_profile_arn, model_params=None):  # Alterado
+#ALTERAR
+def invoke_bedrock_model(prompt, inference_profile_arn, model_params=None):
     """
     Invoca um modelo no Amazon Bedrock usando um Inference Profile.
     """
@@ -154,3 +156,35 @@ def invoke_bedrock_model(prompt, inference_profile_arn, model_params=None):  # A
             "answer": f"Ocorreu um erro ao processar sua solicitação: {str(e)}. Por favor, tente novamente.",
             "sessionId": str(uuid.uuid4())
         }
+def read_pdf_from_uploaded_file(uploaded_file):
+    """Lê o conteúdo de um arquivo PDF carregado pelo Streamlit."""
+    try:
+        import io
+        from PyPDF2 import PdfReader
+        
+        pdf_bytes = io.BytesIO(uploaded_file.getvalue())
+        reader = PdfReader(pdf_bytes)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        return f"Erro ao ler PDF: {str(e)}"
+
+def read_txt_from_uploaded_file(uploaded_file):
+    """Lê o conteúdo de um arquivo TXT carregado pelo Streamlit."""
+    try:
+        return uploaded_file.getvalue().decode("utf-8")
+    except Exception as e:
+        return f"Erro ao ler TXT: {str(e)}"
+
+def read_csv_from_uploaded_file(uploaded_file):
+    """Lê o conteúdo de um arquivo CSV carregado pelo Streamlit."""
+    try:
+        import pandas as pd
+        import io
+        
+        df = pd.read_csv(io.StringIO(uploaded_file.getvalue().decode("utf-8")))
+        return df.to_string()
+    except Exception as e:
+        return f"Erro ao ler CSV: {str(e)}"
