@@ -86,7 +86,7 @@ def get_boto3_client(service_name, region_name='us-east-1', profile_name='edn174
             print(f"ERRO: Falha ao criar cliente boto3: {str(e)}")
             return None
 
-def query_bedrock(message, session_id="", model_params=None, context=""):
+def query_bedrock(message, session_id="", model_params=None, context="", conversation_history=None):
     """
     Envia uma mensagem para o Amazon Bedrock com parâmetros de modelo específicos.
     """
@@ -109,7 +109,7 @@ def query_bedrock(message, session_id="", model_params=None, context=""):
         }
     
     try:
-        prompt = generate_chat_prompt(message, context=context)
+        prompt = generate_chat_prompt(message, conversation_history=conversation_history, context=context)
         
         body = json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
@@ -341,7 +341,7 @@ def handle_message():
                     else:
                         combined_context = rag_context
                     
-                    result = query_bedrock(user_message, current_session_id, context=combined_context)
+                    result = query_bedrock(user_message, current_session_id, context=combined_context, conversation_history=st.session_state.messages)
                 
                 if result:
                     assistant_message = result.get('answer', 'Não foi possível obter uma resposta.')
@@ -477,7 +477,7 @@ def regenerate_message(index):
     status_placeholder.info("Regenerando resposta...")
     
     with st.spinner():
-        result = query_bedrock(user_message, st.session_state.session_id)
+        result = query_bedrock(user_message, st.session_state.session_id, conversation_history=st.session_state.messages)
         
     if result:
         new_response = result.get('answer', 'Não foi possível regenerar a resposta.')
@@ -814,7 +814,7 @@ def handle_message_with_input(user_input):
                 with st.spinner():
                     current_session_id = "" if is_first_message else st.session_state.session_id
                     rag_context = get_rag_context()
-                    result = query_bedrock(user_input, current_session_id, context=rag_context)
+                    result = query_bedrock(user_input, current_session_id, context=rag_context, conversation_history=st.session_state.messages)
                 
                 if result:
                     assistant_message = result.get('answer', 'Não foi possível obter uma resposta.')
@@ -901,7 +901,7 @@ if check_password():
     with st.sidebar:
         col1, col2 = st.columns([1, 3])
         with col1:
-            st.image(logo_path, width=100)
+            st.image(logo_path, width=200)
         with col2:
             st.markdown('<h2 style="margin-top: 0;">SIX AI</h2>', unsafe_allow_html=True)
         
